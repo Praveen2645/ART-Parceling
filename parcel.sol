@@ -2,10 +2,10 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+//import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 
-contract ArtParceling is ERC1155, Ownable(msg.sender) {
+contract ArtParceling is ERC1155 {
     using Counters for Counters.Counter;
     Counters.Counter private _tokenIdCounter;
 
@@ -27,6 +27,11 @@ contract ArtParceling is ERC1155, Ownable(msg.sender) {
         address owner;
     }
 
+    modifier onlyArtist(uint tokenId){
+        require(msg.sender==_tokenDetails[tokenId].artist,"only artist allowed");
+        _;
+    }
+
     mapping(uint256 => Artist) public _tokenDetails;
     mapping(uint256 => Investor) public _investorDetails;
     mapping(uint256 => Parcel) public _parcelDetails;
@@ -37,7 +42,6 @@ contract ArtParceling is ERC1155, Ownable(msg.sender) {
         require(salePrice > 0, "Please set some amount for your NFT");
         require(noOfParcels > 0, "Number of parcels must be greater than zero");
 
-        _tokenIdCounter.increment();
         uint256 parentId = _tokenIdCounter.current();
 
         _mint(msg.sender, parentId, 1, "");
@@ -49,11 +53,11 @@ contract ArtParceling is ERC1155, Ownable(msg.sender) {
             artist: msg.sender
         });
 
-        _parcelDetails[parentId] = Parcel({
-            parentId: 0,
-            price: _pricePerParcel,
-            owner: msg.sender
-        });
+        // _parcelDetails[parentId] = Parcel({
+        //     // parentId: 0, 
+        //     price: _pricePerParcel,
+        //     owner: msg.sender
+        // });
 
         for (uint256 i = 1; i <= noOfParcels; i++) {
             _tokenIdCounter.increment();
@@ -75,18 +79,31 @@ contract ArtParceling is ERC1155, Ownable(msg.sender) {
             });
         }
     }
+//run for loop to set price 
+    // function setPriceForEachParcel(uint id, uint price) external onlyOwner {
+    //     require(_tokenDetails[id].artist != address(0), "Invalid NFT ID");
+    //     require(price > 0, "Price must be greater than zero");
 
-    function setPriceForEachParcel(uint id, uint price) external onlyOwner {
-        require(_tokenDetails[id].artist != address(0), "Invalid NFT ID");
-        require(price > 0, "Price must be greater than zero");
+    //     _tokenDetails[id].pricePerParcel = price;
+    // }
 
-        _tokenDetails[id].pricePerParcel = price;
+     function setPriceForMultipleParcels(uint[] memory ids, uint[] memory prices) external onlyArtist(ids[0]) {
+        require(ids.length == prices.length, "length mismatch");
+
+        for (uint i = 0; i < ids.length; i++) {
+            uint id = ids[i];
+            uint price = prices[i];
+
+            require(_tokenDetails[id].artist != address(0), "Invalid NFT ID");
+            require(price > 0, "Price must be greater than zero");
+
+            _tokenDetails[id].pricePerParcel = price;
+        }
     }
 
     function makeInvestmentOffer(uint id, uint price) external payable {
-    require(id > 0, "Enter valid id");
+    require(id > 0, "Enter valid id"); //changes here
     require(_tokenDetails[id].pricePerParcel == price, "Pay the exact amount");
-
    
     require(_parcelDetails[id].parentId == 0, "Parent token cannot be purchased by investors");
 
@@ -127,5 +144,4 @@ contract ArtParceling is ERC1155, Ownable(msg.sender) {
 //10000000000000000000
 //1000000000000000000
 
-//i want parent id should not be able to buy by investors
-
+//condition for parentId
