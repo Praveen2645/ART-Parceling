@@ -199,6 +199,28 @@ Store Master NFT Biding Voting Detail
     function votingOnBidProposal() external{
 
     }
+
+/*
+Bid on Asset (Master NFT)-This method enables any user (bidder) to place bids on the Art (Master NFT) above the reserve price and the last bid placed.
+Bidders' bid amounts are stored in an escrow contract, and if a new bidder places a higher bid, the previous bidder's amount is returned.
+This process continues until the bidding ends, and the highest bidder becomes the winner of the bid.
+Claim Physical Asse In case the buyer (selected bidder) wants to claim their Artwork, they need to pay the necessary service fees, DIC member fees, 
+ custodian fees and shipping charges. Once these fees are settled, the Artwork will be shipped to the buyer's location, 
+ and all the corresponding NFTs will be burned.
+
+ Input Parameters:Proposal Id,Bid Id,Amount,Wallet Address
+ Output Parameters:Bider Detail,Proposal Id,Bid Id,Amount,Wallet Address
+
+Action
+Transfer Bid amount to smart contract
+Update Bid Winner Address in Bid Detail
+Smart Contract transfer previous Bider amount.
+Store Bider Detail
+
+
+*/
+
+function bidOnAsset() external {}
     
     
     function viewArtDetail(uint256 parentId) public view returns(Art memory) {
