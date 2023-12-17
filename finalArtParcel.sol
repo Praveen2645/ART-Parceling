@@ -8,6 +8,7 @@ import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
+
 import "ERC721.sol";
 import "hardhat/console.sol";
 
@@ -25,12 +26,13 @@ contract ArtPaarell is ERC1155, Ownable(msg.sender) {
         uint256 proposalId;
         uint256 masterNFTId;
         string nftUrl;
-        // string[] docNames;
-        // string[] docUrl;
+        string[] docNames;
+        string[] docUrls;
         uint256 parcellingPrice;
         uint256 minimumInvestment;
         uint256 noOfParcels;
         address artist;
+        address parcelTokenAddress;
         bool isOnSale;
     }
 
@@ -39,12 +41,14 @@ contract ArtPaarell is ERC1155, Ownable(msg.sender) {
         uint256 parcelId;
         uint256 parcelPrice;
         address parcelToken;
+        address parcelOwner;
         bool isForSale;
     }
 
     struct Investor {
         uint256 proposalId;
         uint256[] parcelId;
+        address[] parcelToken;
         address InvestorAddress;
     }
 
@@ -77,6 +81,8 @@ contract ArtPaarell is ERC1155, Ownable(msg.sender) {
     mapping(address investor=> Investor) public addressToInvestorDetails;
     mapping(uint256 proposalId=> bidProposals[]) public idTobidProposalDetails;
     mapping(uint256 proposalId=> Voters) public idToVoters;
+    mapping(uint256 => address) public masterNftToParcelToken;
+
 
     constructor()
         /*address _owner*/
@@ -91,8 +97,8 @@ contract ArtPaarell is ERC1155, Ownable(msg.sender) {
 
     function mintNFT(
         string memory NftUrl,
-        // string[] memory docNames,
-        // string[] memory docUrls,
+        string[] memory docNames,
+        string[] memory docUrls,
         uint256 ParcellingPrice,
         uint256 minimumInvestment,
         uint256 noOfParcel
@@ -100,14 +106,14 @@ contract ArtPaarell is ERC1155, Ownable(msg.sender) {
         // Mint Master NFT (ERC1155)
         uint256 masterId = _tokenIdCounter.current();
         _mint(msg.sender, masterId, 1, "");
-        proposalId++;
+        
 
         MasterNFT memory masterNft;
         masterNft.proposalId = proposalId;
         masterNft.masterNFTId = masterId;
         masterNft.nftUrl = NftUrl;
-        // masterNft.docNames = docNames;
-        // masterNft.docUrl = docUrls;
+        masterNft.docNames = docNames;
+        masterNft.docUrls = docUrls;
         masterNft.parcellingPrice = ParcellingPrice;
         masterNft.minimumInvestment = minimumInvestment;
         masterNft.noOfParcels = noOfParcel;
@@ -115,6 +121,7 @@ contract ArtPaarell is ERC1155, Ownable(msg.sender) {
         masterNft.isOnSale = true;
 
         idToMasterNftDetails[masterId] = masterNft;
+        proposalId++;
 
         // Mint subNfts(721)
         ParcelToken parcelToken = new ParcelToken();
@@ -123,10 +130,11 @@ contract ArtPaarell is ERC1155, Ownable(msg.sender) {
         for (uint256 i = 0; i < noOfParcel; i++) {
             Parcels memory parcel;
             parcel.masterNFTId = masterId;
-            parcel.parcelId = _tokenIdCounter.current() + 1;
+            parcel.parcelId = _tokenIdCounter.current()+1;
             parcel.parcelPrice = ParcellingPrice;
             parcel.parcelToken = address(parcelToken);
-            parcel.isForSale = true;
+            parcel.parcelOwner=msg.sender;
+            parcel.isForSale = true;//need to confirm sale after voting?
 
             masterNftIdToParcels[masterId].push(parcel);
             _tokenIdCounter.increment();
@@ -152,69 +160,90 @@ contract ArtPaarell is ERC1155, Ownable(msg.sender) {
     //as investor pay the parcel price and the admin commision fee, the commission fee will transfer to the contract and parcel amount to the parcel owner
     //after this the parcel nft will transfer to the address investor mention in the parameter
 /*NOTE: need to improve*/
+
+
     function makeInvestment(
-        uint256 _proposalId,
-        uint256[] memory parcelIds,
-        uint256[] memory parcelAmounts,
-        address walletAddress
-    ) external payable {
-        require(
-            parcelIds.length == parcelAmounts.length,
-            "Invalid input arrays length"
-        );
-        require(_proposalId > 0, "Invalid proposal Id");
+    uint256 _proposalId,
+    uint256[] memory parcelIds,
+    uint256[] memory parcelAmounts,
+    address subNftContract,
+    address walletAddress
+) external payable {
+    require(parcelIds.length == parcelAmounts.length, "Invalid input lengths");
+    
+    MasterNFT storage masterNft = idToMasterNftDetails[_proposalId];
+    //require(masterNft.isOnSale, "Master NFT is not on sale");
+    
+    uint256 totalInvestment = 0;
+    for (uint256 i = 0; i < parcelIds.length; i++) {
+        uint256 parcelId = parcelIds[i];
+        uint256 parcelAmount = parcelAmounts[i];
+        
+        // Validate the parcel details
+        require(masterNftIdToParcels[_proposalId][parcelId].isForSale, "Parcel is not for sale");
+        require(msg.sender != masterNft.artist, "Artist cannot buy their own parcels");
+        require(msg.value >= parcelAmount, "Insufficient funds");
 
-        uint256 totalAmount = 0;
-        uint256 adminCommission = 0;
+        // Transfer the parcel amount to the parcel owner
+        address payable parcelOwner = payable(masterNftIdToParcels[_proposalId][parcelId].parcelOwner);
+        parcelOwner.transfer(parcelAmount);
 
-        Investor storage investor = addressToInvestorDetails[msg.sender];
+        // Add the parcel amount to the total investment
+        totalInvestment = totalInvestment.add(parcelAmount);
+        console.log("Total investment:", totalInvestment);
 
-      
-
-        for (uint256 i = 0; i < parcelIds.length; i++) {
-            uint256 parcelId = parcelIds[i];
-            uint256 parcelAmount = parcelAmounts[i];
-
-            require(parcelId < _tokenIdCounter.current(), "Invalid parcel Id");
-            require(
-                parcelAmount >= masterNftIdToParcels[parcelId][i].parcelPrice,
-                "Invalid parcel amount"
-            );
-            require(
-                masterNftIdToParcels[parcelId][i].isForSale,
-                "Parcel already purchased"
-            );
-
-            totalAmount = totalAmount.add(parcelAmount);
-            adminCommission = adminCommission.add(
-                parcelAmount.mul(adminCommissionPercentage).div(100)
-            ); //calculating admincommision
-            console.log(adminCommission);
-
-            // Transfer the parcel amount to the parcel owner
-            address parcelOwner = idToMasterNftDetails[parcelId].artist;
-            require(parcelOwner != address(0), "Invalid parcel owner");
-
-            payable(parcelOwner).transfer(parcelAmount);
-
-            // Transfer the parcel NFT to the investor
-            ParcelToken parcelToken = ParcelToken(
-                masterNftIdToParcels[parcelId][i].parcelToken
-            );
-            parcelToken.safeTransferFrom(parcelOwner, walletAddress, parcelId);
-
-            // Update parcel details
-            masterNftIdToParcels[parcelId][i].isForSale = false;
-            investor.parcelId.push(parcelId);
-        }
-
-        // Transfer admin commission to the contract
-        require(totalAmount >= adminCommission, "Invalid total amount");
-        payable(address(this)).transfer(adminCommission);
-
+        // Transfer the parcel NFT to the investor
+        ERC721(subNftContract).safeTransferFrom(address(this), walletAddress, parcelId);
+        console.log("Contract balance:", address(this).balance);
+        
+        // Update parcel details
+        masterNftIdToParcels[_proposalId][parcelId].parcelOwner = msg.sender;
+        masterNftIdToParcels[_proposalId][parcelId].isForSale = false;
+        
     }
 
-    //NOTE: need to improve
+    // Calculate and transfer the admin commission fee
+    uint256 adminCommission = (totalInvestment * adminCommissionPercentage) / 100;
+    console.log("commision:",adminCommission );
+    require(msg.value >= totalInvestment.add(adminCommission), "Insufficient funds");
+
+    address payable adminWallet = payable(owner());
+    adminWallet.transfer(adminCommission);
+
+}
+function getTotalPriceToPay(
+    uint256 _proposalId,
+    uint256[] memory parcelIds,
+    uint256[] memory parcelAmounts
+) public view returns (uint256 totalPrice) {
+    require(parcelIds.length == parcelAmounts.length, "Invalid input lengths");
+
+//MasterNFT storage masterNft = idToMasterNftDetails[_proposalId];
+    require(idToMasterNftDetails[_proposalId].isOnSale, "Master NFT is not on sale");
+
+    uint256 totalInvestment = 0;
+    for (uint256 i = 0; i < parcelIds.length; i++) {
+        uint256 parcelId = parcelIds[i];
+        uint256 parcelAmount = parcelAmounts[i];
+
+        // Validate the parcel details
+        require(masterNftIdToParcels[_proposalId][parcelId].isForSale, "Parcel is not for sale");
+
+        // Add the parcel amount to the total investment
+        totalInvestment = totalInvestment.add(parcelAmount);
+    }
+
+    // Calculate the admin commission fee
+    uint256 adminCommission = (totalInvestment * adminCommissionPercentage) / 100;
+
+    // Calculate the total amount including the admin commission
+    totalPrice = totalInvestment.add(adminCommission);
+
+    return totalPrice;
+}
+
+
+
 
 function createBidProposal(uint256 _proposalId, uint256 _reservePrice)
     external
@@ -294,7 +323,9 @@ function createBidProposal(uint256 _proposalId, uint256 _reservePrice)
     }
 }
 
-   
+function bidOnAsset() external {}
+
+function claimPhysicalAsset() external {}
 
 
     function viewNftDetail(uint256 masterNFTId)
