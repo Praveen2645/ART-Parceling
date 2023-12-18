@@ -10,6 +10,7 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 
 import "ERC721.sol";
+import "escrow.sol";
 import "hardhat/console.sol";
 
 contract ArtPaarell is ERC1155, Ownable(msg.sender) {
@@ -18,9 +19,14 @@ contract ArtPaarell is ERC1155, Ownable(msg.sender) {
     Counters.Counter private _tokenIdCounter;
 
     //address public owner;
+    address payable public escrowContract;
     uint256 proposalId;
     uint256 bidId;
-    uint256 adminCommissionPercentage = 5; //admin commision eg:5%
+    uint256 adminCommissionPercentage = 5; //admin commision eg:5% change later
+    uint256 serviceFees = 100; //change later 
+    uint256 DICmemberFees = 100;//change later
+    uint256 custodianFees = 100;//change later
+    uint256 shippingFees = 100;//change later
 
     struct MasterNFT {
         uint256 proposalId;
@@ -32,7 +38,6 @@ contract ArtPaarell is ERC1155, Ownable(msg.sender) {
         uint256 minimumInvestment;
         uint256 noOfParcels;
         address artist;
-        address parcelTokenAddress;
         bool isOnSale;
     }
 
@@ -49,14 +54,14 @@ contract ArtPaarell is ERC1155, Ownable(msg.sender) {
         uint256 proposalId;
         uint256[] parcelId;
         address[] parcelToken;
-        address InvestorAddress;
+        address payable InvestorAddress;
     }
 
     struct bidProposals {
         uint256 proposalId;
         uint256 bidId;
         uint256 masterNFtId;
-        uint256 amount;
+        uint256 reservePrice;
         bool approved;
         bool active;
     }
@@ -65,7 +70,21 @@ contract ArtPaarell is ERC1155, Ownable(msg.sender) {
         uint voteId;
         uint proposalId;
         address subHolder;
+        address[] voters;
         bool voteStatus;
+        
+    }
+
+    struct BidDetails{
+        uint bidId;
+        uint masterNftId;
+        uint reservePrice;
+        uint startAt;
+        uint endAt;
+        uint duration;
+        uint highestBid;
+        address highestBidder;
+        address payable[] bidders; 
     }
 
     modifier onlyArtist(uint256 masterNFTId) {
@@ -79,9 +98,11 @@ contract ArtPaarell is ERC1155, Ownable(msg.sender) {
     mapping(uint256 masterId=> MasterNFT) public idToMasterNftDetails;
     mapping(uint256 masterId=> Parcels[]) public masterNftIdToParcels;
     mapping(address investor=> Investor) public addressToInvestorDetails;
-    mapping(uint256 proposalId=> bidProposals[]) public idTobidProposalDetails;
+    mapping(uint256 proposalId=> bidProposals[]) public idToBidProposalDetails;
     mapping(uint256 proposalId=> Voters) public idToVoters;
-    mapping(uint256 => address) public masterNftToParcelToken;
+    mapping(uint256 bidId=> BidDetails) public bidIdToBidDetails;
+   
+    // mapping(uint256 => address) public masterNftToParcelToken;
 
 
     constructor()
@@ -242,18 +263,13 @@ function getTotalPriceToPay(
     return totalPrice;
 }
 
-
-
-
-function createBidProposal(uint256 _proposalId, uint256 _reservePrice)
+function createBidProposal(uint256 _proposalId, uint256 _reservePrice) //reservePrice=> minimum amount the seller will accept
     external
     onlyOwner
 {
-    require(_proposalId > 0, "Invalid proposal id");
-    require(_reservePrice > 0, "Invalid amount");
-    require(_proposalId <= proposalId, "Invalid proposal id");
+    require(_reservePrice > 0, "reserve amount should not be zero");
 
-    bidProposals[] storage proposals = idTobidProposalDetails[_proposalId];
+    bidProposals[] storage proposals = idToBidProposalDetails[_proposalId];
 
     for (uint256 i = 0; i < proposals.length; i++) {
         require(!(proposals[i].proposalId == _proposalId && proposals[i].active), "proposal already exists");
@@ -261,14 +277,16 @@ function createBidProposal(uint256 _proposalId, uint256 _reservePrice)
 
     bidId++;
 
-    idTobidProposalDetails[_proposalId].push(
+    idToBidProposalDetails[_proposalId].push(
         bidProposals({
             proposalId: _proposalId,
             bidId: bidId,
             masterNFtId: idToMasterNftDetails[_proposalId].masterNFTId,
-            amount: _reservePrice,
+            reservePrice: _reservePrice,
+            
             approved: false,
             active: true
+           
         })
     );
 }
@@ -292,8 +310,8 @@ function createBidProposal(uint256 _proposalId, uint256 _reservePrice)
     uint yesVotes = 0;
     uint noVotes = 0;
 
-    for (uint i = 0; i < idTobidProposalDetails[_proposalId].length; i++) {
-        bidProposals storage proposal = idTobidProposalDetails[_proposalId][i];
+    for (uint i = 0; i < idToBidProposalDetails[_proposalId].length; i++) {
+        bidProposals storage proposal = idToBidProposalDetails[_proposalId][i];
 
         // Check if the proposal is active
         if (proposal.active) {
@@ -311,22 +329,74 @@ function createBidProposal(uint256 _proposalId, uint256 _reservePrice)
     // Check if 51% or more voted "yes"
     if (yesVotes * 100 >= 51 * (yesVotes + noVotes)) {
         // Majority voted "yes", approve the bid proposal
-        for (uint i = 0; i < idTobidProposalDetails[_proposalId].length; i++) {
-            bidProposals storage proposal = idTobidProposalDetails[_proposalId][i];
+        for (uint i = 0; i < idToBidProposalDetails[_proposalId].length; i++) {
+            bidProposals storage proposal = idToBidProposalDetails[_proposalId][i];
             if (proposal.active) {
                 proposal.approved = true;
                 proposal.active = false;
             }
         }
 
-       /* transfer of nft to bidder and profits to the subHolders */
+       /* transfer of nft to bidder and profits to the subHolders */ 
+       //need to complete
     }
 }
 
-function bidOnAsset() external {}
+// function for setting the escrow conttract address 
+function setEscrowContract(address payable _escrowContract) external onlyOwner{
+    escrowContract = _escrowContract;
+}
 
-function claimPhysicalAsset() external {}
+/*start the bid for the masterNFT*/
+function startBid(uint _bidId, uint _masterNftId, uint _reservePrice,uint _duration) external onlyOwner {
+require(_bidId>0,"invaid bid Id");
+require(_duration >0, "duration can't be zero.");
+require(_reservePrice >0,"reserve price cant be zero");
 
+bidIdToBidDetails[_bidId].bidId=_bidId;
+bidIdToBidDetails[_bidId].masterNftId=_masterNftId;
+bidIdToBidDetails[_bidId].reservePrice=_reservePrice;
+bidIdToBidDetails[_bidId].duration= _duration;
+bidIdToBidDetails[_bidId].startAt= block.timestamp;
+bidIdToBidDetails[_bidId].endAt=_duration+block.timestamp;
+bidIdToBidDetails[_bidId].highestBid=0;
+bidIdToBidDetails[_bidId].highestBidder=payable(address(0));
+
+}
+
+
+function bidOnMasterNft(uint _proposalId, uint _bidId, uint _bidAmount, address _walletAddress) external payable {
+    BidDetails storage bidDetails = bidIdToBidDetails[_bidId];
+
+    require(_bidId > 0, "Invalid bid id");
+    require(bidDetails.masterNftId == idToBidProposalDetails[_proposalId][_bidId].masterNFtId, "Invalid masterNftId");
+    require(block.timestamp >= bidDetails.startAt && block.timestamp <= bidDetails.endAt, "Bidding not allowed or bidding ended");
+    require(_bidAmount > bidDetails.highestBid, "Bid amount should be higher than the current highest bid");
+
+}
+/*
+In case the buyer (selected bidder) wants to claim their Artwork, they need to pay the necessary service fees, DIC member fees,
+custodian fees and shipping charges. Once these fees are settled, the Artwork will be shipped to the buyer's location,
+and all the corresponding NFTs will be burned.
+*/
+
+function claimPhysicalAsset(uint _proposalId, uint _bidId) external {}
+
+
+/*
+If there are no suitable offers, the property proposer can redeem their NFT back to the platform, 
+but this process incurs platform fees and custodianship charges, deducted from the stacking amount.
+*/
+
+function requestToReleaseAsset(uint proposalId) external /*onlyArtist*/{ 
+
+}
+
+function getBidProposalDetails(uint _proposalId, uint _bidId) internal view returns (bidProposals storage) {
+    bidProposals[] storage proposals = idToBidProposalDetails[_proposalId];
+    require(_bidId <= proposals.length, "Invalid bid ID");
+    return proposals[_bidId - 1];
+}
 
     function viewNftDetail(uint256 masterNFTId)
         public
@@ -349,42 +419,17 @@ function claimPhysicalAsset() external {}
         view
         returns (bidProposals[] memory)
     {
-        return idTobidProposalDetails[_proposalId];
+        return idToBidProposalDetails[_proposalId];
     }
 }
 
-// function storeDocument(uint256 masterNFTId, string memory docName, string memory docUrl)
-//     external
-//     onlyArtist(masterNFTId)
-// {
-//     masterNftIdToDocuments[masterNFTId][docName] = docUrl;
-// }
-
-// function getDocument(uint256 masterNFTId, string memory docName) external view returns (string memory) {
-//     return masterNftIdToDocuments[masterNFTId][docName];
-// }
-
-// function storeCertificate(uint256 masterNFTId, string memory certificateName, string memory certificateUrl)
-//     external
-//     onlyArtist(masterNFTId)
-// {
-//     masterNftIdToCertificates[masterNFTId][certificateName] = certificateUrl;
-// }
-
-// function getCertificate(uint256 masterNFTId, string memory certificateName)
-//     external
-//     view
-//     returns (string memory)
-// {
-//     return masterNftIdToCertificates[masterNFTId][certificateName];
-// }
 
 //1000000000000000000
 //100000000000000000
 
 //pinata: https://gateway.pinata.cloud/ipfs/QmcCLszT5NDEJsmYbg8bnFibt75yfY5P5bcqJZNoRK9cu8
 
-// complete this function so investor can make investment with the desired parcel amount.
-//when investor will pay the amount he will not only pay the parcel amount but also the admin comminsion fee assume it 5%.
-//as investor pay the parcel price and the admin commision fee, the commission fee will transfer to the contract and parcel amount to the parcel owner
-//after this the parcel nft will transfer to the address investor mention in the parameter
+//bidOnMasterNft update this function so anyone can bid for masterNft and bidders can bid from this function the bidded amount will transfer to the
+//escrowContract address and if other bidder bid and his amount is greater than the privios bidder transfer the previous bidders bid amount back to
+//him from escrow contract to his account.and keep the highest bidders amount in the contract.untill the bidding is going on
+//then transfer the masterNft to the bidder and
