@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Burnable.sol";
 
 
 contract ParcelToken is ERC721URIStorage {
@@ -36,5 +37,9 @@ contract ParcelToken is ERC721URIStorage {
     //     return owner;
     // }
 
-    function burnTokens() public{}
+     function burnTokens(uint256[] memory tokenIds) external {
+        for (uint256 i = 0; i < tokenIds.length; i++) {
+            _burn(tokenIds[i]);
+        }
+}
 }
