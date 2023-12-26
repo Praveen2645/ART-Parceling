@@ -72,6 +72,7 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
         address subHolder;
         address[] voters;
         bool voteStatus;
+        mapping(address => bool) voted;
     }
 
     struct BidDetails{
@@ -92,8 +93,6 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
     );
     _;
 }
-
-
 
     mapping(uint256 proposalId => NftDetails) public idToNftDetails;
     mapping(uint256 proposalId => Parcels[]) public proposalIdToParcels;
@@ -252,7 +251,7 @@ function makeInvestment(uint256 _proposalId, uint256[] memory parcelId) external
 // }
 
 
-// function to create  bidProposals
+// function to create  bidProposals for masterNFT and set the reservePrice
 function createBidProposal(uint256 _proposalId, uint256 _reservePrice) //reservePrice=> minimum amount the seller will accept
     external
     onlyOwner
@@ -272,42 +271,58 @@ function createBidProposal(uint256 _proposalId, uint256 _reservePrice) //reserve
             proposalId: _proposalId,
             bidId: bidId,
             reservePrice: _reservePrice,
-            approved: false,
-            active: true
+            approved: false,// proposal is approved for sale or not
+            active: true //proposal is active or not
            
         })
     );
 }
 
-//parcel holders will vote for the proposal to sold the master Nft
+/*
+1. only _parcelHolders can vote on the proposal.=>done
+2.51% votes needed for majority for approval or rejection of the proposal.=done
+3.master NFt will be sold to the proposer or the proposer creator.=>already owner
+4.parcel holders will receive their profits.=>not doone
+5.burn the tokens of parcel holders => done
+NOte: those who havnt approved their NFT will also burn and they ll also get the profit.
+*/
 
-    function voteForBidProposal(uint _proposalId, address parcelHolderAddress, bool voteStatus) external {
-   //require(_proposalId <= proposalId, "Invalid proposal id");
-    require(parcelHolderAddress != address(0), "Invalid parcel holder address");
+function voteForBidProposal(uint256 _proposalId, address _parcelHolderAddress, bool _voteStatus) external {
 
-    Voters storage voter = idToVoters[_proposalId];
+Parcels[] storage parcels = proposalIdToParcels[_proposalId];
+Voters storage voters = idToVoters[_proposalId];
 
-    // Check if the voter has not voted for the proposal
-    require(!voter.voteStatus, "Already voted for this proposal");
+    bool isValidParcel = false;
 
-    // Update voter details
-    voter.voteId++;
-    voter.proposalId = _proposalId;
-    voter.subHolder = parcelHolderAddress;
-    voter.voteStatus = voteStatus;
-
-    // Count the votes
-    uint yesVotes = 0;
+    // Iterate through the parcels to find the matching parcel and validate the parcel holder address
+    for (uint256 i = 0; i < parcels.length; i++) {
+        if (parcels[i].parcelOwner == _parcelHolderAddress) {
+            isValidParcel = true;
+            break;
+        }
+    }
+    require(isValidParcel, "Invalid parcel id or parcel holder address");
+    require(!voters.voted[msg.sender], "Already voted");
+   // voters.voted[msg.sender] = true;
+       // Update voter details
+    voters.voteId++;
+    voters.proposalId = _proposalId;
+    voters.subHolder = _parcelHolderAddress;
+    voters.voteStatus = _voteStatus;
+     
+       // Check if the majority of parcel holders have voted
+    
+    uint256 yesVotes = 0;
     uint noVotes = 0;
 
-    for (uint i = 0; i < idToBidProposalDetails[_proposalId].length; i++) {
+      for (uint i = 0; i < idToBidProposalDetails[_proposalId].length; i++) {
         bidProposals storage proposal = idToBidProposalDetails[_proposalId][i];
 
         // Check if the proposal is active
         if (proposal.active) {
             // Check if the voter is a parcel holder and voted
-            if (voter.subHolder == parcelHolderAddress) {
-                if (voteStatus) {
+            if (voters.subHolder == _parcelHolderAddress) {
+                if (_voteStatus) {
                     yesVotes++;
                 } else {
                     noVotes++;
@@ -315,24 +330,41 @@ function createBidProposal(uint256 _proposalId, uint256 _reservePrice) //reserve
             }
         }
     }
-
-    // Check if 51% or more voted "yes"
+      // Check if 51% or more voted "yes"
     if (yesVotes * 100 >= 51 * (yesVotes + noVotes)) {
-        // Majority voted "yes", approve the bid proposal
-        for (uint i = 0; i < idToBidProposalDetails[_proposalId].length; i++) {
-            bidProposals storage proposal = idToBidProposalDetails[_proposalId][i];
-            if (proposal.active) {
-                proposal.approved = true;
-                proposal.active = false;
-            }
-        }
 
-       /* transfer of nft to bidder and profits to the subHolders */ 
-       //need to complete
+ //_safeTransferFrom(address(this), msg.sender, _proposalId, 1, "");//already master nft belongs to the artist
+
+// Burn tokens of subholders and update the Parcels struct
+for (uint i = 0; i < parcels.length; i++) {
+    if (voters.subHolder == parcels[i].parcelOwner) {
+        uint256[] memory tokenIds = new uint256[](1);
+        tokenIds[0] = parcels[i].parcelId;
+        ParcelToken(parcels[i].parcelToken).burnTokens(tokenIds);
+
+        // Update Parcels struct for the specific index
+        parcels[i].proposalId = _proposalId;
+        parcels[i].parcelId = 0;
+        parcels[i].parcelPrice = 0;
+        parcels[i].parcelToken = address(0);
+        parcels[i].parcelOwner = address(0);
+        parcels[i].isForSale = false;
     }
 }
 
-// function for setting the escrow conttract address 
+
+        // Majority voted "yes", approve the bid proposal
+        for (uint i = 0; i < idToBidProposalDetails[_proposalId].length; i++) {
+            bidProposals storage Bidproposal = idToBidProposalDetails[_proposalId][i];
+            if (Bidproposal.active) {
+                Bidproposal.approved = true;
+                Bidproposal.active = false;
+            }
+        }
+    }
+}
+
+// function for setting the escrow contract address 
 function setEscrowContract(address payable _escrowContract) external onlyOwner{
     escrowContract = _escrowContract;
 }
@@ -414,7 +446,9 @@ function getBidProposalDetails(uint _proposalId, uint _bidId) internal view retu
         return idToBidProposalDetails[_proposalId];
     }
 
-    function getAllParcelHolders()0
+    // function getAllParcelHolders(uint256 _proposalId)public view returns(address){
+    //     proposalIdToParcels[_proposalId].parcelOwners;
+    // }
 
 }
 
@@ -424,7 +458,3 @@ function getBidProposalDetails(uint _proposalId, uint _bidId) internal view retu
 
 //pinata: https://gateway.pinata.cloud/ipfs/QmcCLszT5NDEJsmYbg8bnFibt75yfY5P5bcqJZNoRK9cu8
 
-//bidOnMasterNft update this function so anyone can bid for masterNft and bidders can bid from this function the bidded amount will transfer to the
-//escrowContract address and if other bidder bid and his amount is greater than the privios bidder transfer the previous bidders bid amount back to
-//him from escrow contract to his account.and keep the highest bidders amount in the contract.untill the bidding is going on
-//then transfer the masterNft to the bidder and
