@@ -11,7 +11,7 @@ import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 
 import "ERC721.sol";
-//import "escrow.sol";
+import "escrow.sol";
 import "hardhat/console.sol";
 
 contract ArtParcel is ERC1155, Ownable(msg.sender) {
@@ -22,7 +22,7 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
 
     //address public owner;
     address payable  escrowContract;
-    //uint256 public proposalId;
+    uint256 public voterId;
     uint256 bidId;
     uint256 adminCommissionPercentage = 5; //admin commision eg:5% change later
     uint256 serviceFees = 100; //change later 
@@ -66,17 +66,16 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
         bool active;
     }
 
-    struct Voters{
-        uint voteId;
-        uint proposalId;
-        address subHolder;
+  struct Voters {
+        uint256 proposalId;
+        uint256 voterId;
         address[] voters;
-        bool voteStatus;
         mapping(address => bool) voted;
     }
 
     struct BidDetails{
         uint bidId;
+        uint proposalId;
         uint reservePrice;
         uint startAt;
         uint endAt;
@@ -84,6 +83,7 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
         uint highestBid;
         address highestBidder;
         address payable[] bidders; 
+        bool isOnSale;
     }
 
     modifier onlyArtist(uint256 _proposalId) {
@@ -98,20 +98,16 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
     mapping(uint256 proposalId => Parcels[]) public proposalIdToParcels;
     mapping(address investor => Investor) public addressToInvestorDetails;
     mapping(uint256 proposalId => bidProposals[]) public idToBidProposalDetails;
-    mapping(uint256 proposalId => Voters) public idToVoters;
+    mapping(uint256 proposalId => Voters) private idToVoters;
     mapping(uint256 bidId => BidDetails) public bidIdToBidDetails;
 
 
     constructor()
-        /*address _owner*/
+        
         ERC1155("https://myapi.com/api/token/{id}.json")
     {
-        //owner=_owner;
+      
     }
-
-    // function setOwner(address _newOwner) external {
-    //     owner= _newOwner;
-    // }
 
     function mintNFT(
         string memory NftUrl,
@@ -176,10 +172,6 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
         }
     }
 
-// investor can make investment with the decided parcel amount+commision fee(5%)eg parclePrice=100wei. investor will pay 100+5%.
-// as investor pay the parcel amount transfer commision to
-// than transfer the parcel Nft to investor
-
 function makeInvestment(uint256 _proposalId, uint256[] memory parcelId) external payable {
     
     Parcels[] storage parcels = proposalIdToParcels[_proposalId];
@@ -217,40 +209,6 @@ function makeInvestment(uint256 _proposalId, uint256[] memory parcelId) external
     
 }
 
-
-//calculate the total price for make investment for the parcelNFt
-// function totalPriceToPayForParcel(
-//     uint256 _proposalId,
-//     uint256[] memory parcelIds,
-//     uint256[] memory parcelAmounts
-// ) public view returns (uint256 totalPrice) {
-//     require(parcelIds.length == parcelAmounts.length, "Invalid input lengths");
-
-
-//     uint256 totalInvestment = 0;
-//     for (uint256 i = 0; i < parcelIds.length; i++) {
-//         uint256 parcelId = parcelIds[i];
-//         uint256 parcelAmount = parcelAmounts[i];
-
-//         // Validate the parcel details
-//         require(proposalIdToParcels[_proposalId][parcelId].isForSale, "Parcel already sold");
-
-//         // Add the parcel amount to the total investment
-//         totalInvestment = totalInvestment.add(parcelAmount);
-//         console.log("totalnvestment is:",totalInvestment);
-//     }
-
-//     // Calculate the admin commission fee
-//     uint256 adminCommission = (totalInvestment * adminCommissionPercentage) / 100;
-
-//     // Calculate the total amount including the admin commission
-//     totalPrice = totalInvestment.add(adminCommission);
-//     console.log("totalPrice:",totalPrice);
-
-//     return totalPrice;
-// }
-
-
 // function to create  bidProposals for masterNFT and set the reservePrice
 function createBidProposal(uint256 _proposalId, uint256 _reservePrice) //reservePrice=> minimum amount the seller will accept
     external
@@ -273,96 +231,84 @@ function createBidProposal(uint256 _proposalId, uint256 _reservePrice) //reserve
             reservePrice: _reservePrice,
             approved: false,// proposal is approved for sale or not
             active: true //proposal is active or not
-           
         })
     );
 }
 
+ function voteForBidProposal(uint256 _proposalId, bool _voteStatus) external {
+        address _parcelHolderAddress = msg.sender;
+
+        require(isParcelHolder(_proposalId, _parcelHolderAddress), "Not a parcel holder for the proposal");
+
+        Voters storage voters = idToVoters[_proposalId];
+
+        require(!voters.voted[_parcelHolderAddress], "Already voted");
+
+        // Mark the voter as voted
+        voters.voted[_parcelHolderAddress] = true;
+        voters.voters.push(_parcelHolderAddress);
+        voters.voterId = voterId;
+        voterId++;
+
+        // Check if the proposal has received enough votes for the majority
+        if (hasMajorityVotes(_proposalId)) {
+            if (_voteStatus) {
+                approveBidProposal(_proposalId);
+            } else {
+                rejectBidProposal(_proposalId);
+            }
+        }
+    }
+
+
+    function isParcelHolder(uint256 _proposalId, address _address) internal view returns (bool) {
+        Parcels[] storage parcels = proposalIdToParcels[_proposalId];
+        for (uint256 i = 0; i < parcels.length; i++) {
+            if (parcels[i].parcelOwner == _address) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+  function hasMajorityVotes(uint256 _proposalId) internal view returns (bool) {
+        Voters storage voters = idToVoters[_proposalId];
+        uint256 totalVoters = voters.voters.length;
+        uint256 majorityVotes = (totalVoters * 51) / 100;
+
+        return totalVoters >= majorityVotes;
+    }
+
+function approveBidProposal(uint256 _proposalId) internal {
+    bidProposals[] storage proposals = idToBidProposalDetails[_proposalId];
+    for (uint256 i = 0; i < proposals.length; i++) {
+        if (proposals[i].active) {
+            proposals[i].approved = true;
+            proposals[i].active = false;
+           
+        }
+    }
+}
+
+function rejectBidProposal(uint256 _proposalId) internal {
+    bidProposals[] storage proposals = idToBidProposalDetails[_proposalId];
+    for (uint256 i = 0; i < proposals.length; i++) {
+        if (proposals[i].active) {
+            proposals[i].approved = false;
+            proposals[i].active = true;
+            
+        }
+    }
+}
 /*
-1. only _parcelHolders can vote on the proposal.=>done
-2.51% votes needed for majority for approval or rejection of the proposal.=done
-3.master NFt will be sold to the proposer or the proposer creator.=>already owner
-4.parcel holders will receive their profits.=>not doone
-5.burn the tokens of parcel holders => done
-NOte: those who havnt approved their NFT will also burn and they ll also get the profit.
+function to share the profit to parcelHolders
 */
 
-function voteForBidProposal(uint256 _proposalId, address _parcelHolderAddress, bool _voteStatus) external {
 
-Parcels[] storage parcels = proposalIdToParcels[_proposalId];
-Voters storage voters = idToVoters[_proposalId];
-
-    bool isValidParcel = false;
-
-    // Iterate through the parcels to find the matching parcel and validate the parcel holder address
-    for (uint256 i = 0; i < parcels.length; i++) {
-        if (parcels[i].parcelOwner == _parcelHolderAddress) {
-            isValidParcel = true;
-            break;
-        }
+    function parcelClaim(address _parcelToken, uint256 _proposalId, uint _reservePrice) external payable onlyArtist(_proposalId){
+        
     }
-    require(isValidParcel, "Invalid parcel id or parcel holder address");
-    require(!voters.voted[msg.sender], "Already voted");
-   // voters.voted[msg.sender] = true;
-       // Update voter details
-    voters.voteId++;
-    voters.proposalId = _proposalId;
-    voters.subHolder = _parcelHolderAddress;
-    voters.voteStatus = _voteStatus;
-     
-       // Check if the majority of parcel holders have voted
-    
-    uint256 yesVotes = 0;
-    uint noVotes = 0;
 
-      for (uint i = 0; i < idToBidProposalDetails[_proposalId].length; i++) {
-        bidProposals storage proposal = idToBidProposalDetails[_proposalId][i];
-
-        // Check if the proposal is active
-        if (proposal.active) {
-            // Check if the voter is a parcel holder and voted
-            if (voters.subHolder == _parcelHolderAddress) {
-                if (_voteStatus) {
-                    yesVotes++;
-                } else {
-                    noVotes++;
-                }
-            }
-        }
-    }
-      // Check if 51% or more voted "yes"
-    if (yesVotes * 100 >= 51 * (yesVotes + noVotes)) {
-
- //_safeTransferFrom(address(this), msg.sender, _proposalId, 1, "");//already master nft belongs to the artist
-
-// Burn tokens of subholders and update the Parcels struct
-for (uint i = 0; i < parcels.length; i++) {
-    if (voters.subHolder == parcels[i].parcelOwner) {
-        uint256[] memory tokenIds = new uint256[](1);
-        tokenIds[0] = parcels[i].parcelId;
-        ParcelToken(parcels[i].parcelToken).burnTokens(tokenIds);
-
-        // Update Parcels struct for the specific index
-        parcels[i].proposalId = _proposalId;
-        parcels[i].parcelId = 0;
-        parcels[i].parcelPrice = 0;
-        parcels[i].parcelToken = address(0);
-        parcels[i].parcelOwner = address(0);
-        parcels[i].isForSale = false;
-    }
-}
-
-
-        // Majority voted "yes", approve the bid proposal
-        for (uint i = 0; i < idToBidProposalDetails[_proposalId].length; i++) {
-            bidProposals storage Bidproposal = idToBidProposalDetails[_proposalId][i];
-            if (Bidproposal.active) {
-                Bidproposal.approved = true;
-                Bidproposal.active = false;
-            }
-        }
-    }
-}
 
 // function for setting the escrow contract address 
 function setEscrowContract(address payable _escrowContract) external onlyOwner{
@@ -371,13 +317,13 @@ function setEscrowContract(address payable _escrowContract) external onlyOwner{
 
 /*start the bid for the masterNFT*/
 
-function startBid(uint _bidId, uint _reservePrice,uint _duration) external onlyOwner {
+function startBid(uint256 _proposalId,uint256 _bidId, uint256 _reservePrice,uint256 _duration) external onlyOwner {
 require(_bidId>0,"invaid bid Id");
 require(_duration >0, "duration can't be zero.");
 require(_reservePrice >0,"reserve price cant be zero");
 
+bidIdToBidDetails[_bidId].proposalId = _proposalId;
 bidIdToBidDetails[_bidId].bidId=_bidId;
-// bidIdToBidDetails[_bidId].masterNftId=_masterNftId;
 bidIdToBidDetails[_bidId].reservePrice=_reservePrice;
 bidIdToBidDetails[_bidId].duration= _duration;
 bidIdToBidDetails[_bidId].startAt= block.timestamp;
@@ -388,14 +334,20 @@ bidIdToBidDetails[_bidId].highestBidder=payable(address(0));
 }
 
 //function to bid 
-function bidOnMasterNft(uint _proposalId, uint _bidId, uint _bidAmount/*, address _walletAddress*/) external payable {
+/*
+1. anyone can bid on master above the reserve price.
+2. bidders bid save in escrow contract
+3. previos bid amount will transfer back to the bidder incase other bidder makes the highestBid.
+4. continue bidding till the bids duration
+
+*/
+function bidOnMasterNft(uint _bidId, uint _bidAmount, address _walletAddress) external payable {
     BidDetails storage bidDetails = bidIdToBidDetails[_bidId];
 
     require(_bidId > 0, "Invalid bid id");
     //require(bidDetails.masterNftId == idToBidProposalDetails[_proposalId][_bidId].masterNFtId, "Invalid masterNftId");
     require(block.timestamp >= bidDetails.startAt && block.timestamp <= bidDetails.endAt, "Bidding not allowed or bidding ended");
     require(_bidAmount > bidDetails.highestBid, "Bid amount should be higher than the current highest bid");
-
 }
 
 /*
@@ -446,9 +398,26 @@ function getBidProposalDetails(uint _proposalId, uint _bidId) internal view retu
         return idToBidProposalDetails[_proposalId];
     }
 
-    // function getAllParcelHolders(uint256 _proposalId)public view returns(address){
-    //     proposalIdToParcels[_proposalId].parcelOwners;
-    // }
+    function getAllVotersWithStatus(uint256 _proposalId) external view returns (address[] memory, bool[] memory) {
+    Voters storage voters = idToVoters[_proposalId];
+    
+    uint256 numVoters = voters.voters.length;
+    address[] memory voterAddresses = new address[](numVoters);
+    bool[] memory voteStatuses = new bool[](numVoters);
+
+    for (uint256 i = 0; i < numVoters; i++) {
+        address voterAddress = voters.voters[i];
+        bool voteStatus = voters.voted[voterAddress];
+        
+        voterAddresses[i] = voterAddress;
+        voteStatuses[i] = voteStatus;
+    }
+
+    return (voterAddresses, voteStatuses);
+}
+
+
+
 
 }
 
@@ -458,3 +427,27 @@ function getBidProposalDetails(uint _proposalId, uint _bidId) internal view retu
 
 //pinata: https://gateway.pinata.cloud/ipfs/QmcCLszT5NDEJsmYbg8bnFibt75yfY5P5bcqJZNoRK9cu8
 
+// // Burn tokens of subholders and update the Parcels struct
+// for (uint i = 0; i < parcels.length; i++) {
+//     if (voters.subHolder == parcels[i].parcelOwner) {
+//         uint256[] memory tokenIds = new uint256[](1);
+//         tokenIds[0] = parcels[i].parcelId;
+//         ParcelToken(parcels[i].parcelToken).burnTokens(tokenIds);
+
+//         // Update Parcels struct for the specific index
+//         parcels[i].proposalId = _proposalId;
+//         parcels[i].parcelId = 0;
+//         parcels[i].parcelPrice = 0;
+//         parcels[i].parcelToken = address(0);
+//         parcels[i].parcelOwner = address(0);
+//         parcels[i].isForSale = false;
+//     }
+// }
+
+/*
+//in this function knowing all investors agree to sell their parcels.
+1.check for all the requirements
+2.owner will transfer some funds so that it will distribute to the parcelHolders
+3.the parcel tokens will burn
+
+*/
