@@ -9,6 +9,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+//import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Burnable.sol";
 
 import "ERC721.sol";
 import "escrow.sol";
@@ -18,7 +19,7 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
     using SafeMath for uint256;
     using Counters for Counters.Counter;
     Counters.Counter private _tokenIdCounter;
-    Counters.Counter private _proposalCounter;
+  
 
     //address public owner;
     address payable  escrowContract;
@@ -45,6 +46,7 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
     struct Parcels {
         uint256 proposalId;
         uint256 parcelId;
+        uint256 parcelOwned;
         uint256 parcelPrice;
         address parcelToken;
         address parcelOwner;
@@ -63,7 +65,7 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
         uint256 bidId;
         uint256 reservePrice;
         bool approved;
-        bool active;
+        bool isActive;
     }
 
   struct Voters {
@@ -100,7 +102,9 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
     mapping(uint256 proposalId => bidProposals[]) public idToBidProposalDetails;
     mapping(uint256 proposalId => Voters) private idToVoters;
     mapping(uint256 bidId => BidDetails) public bidIdToBidDetails;
-
+    mapping(uint256 bidId => bool) public isBidProposalApproved;
+   // mapping(address parcelHolder=> uint256 tokens) private tokensPerHolder;
+    
 
     constructor()
         
@@ -143,6 +147,7 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
             Parcels memory parcel;
             parcel.proposalId = proposalCounter;
             parcel.parcelId =i+1;
+            parcel.parcelOwned=0;
             parcel.parcelPrice = ParcellingPrice;
             parcel.parcelToken = address(parcelToken);
             parcel.parcelOwner= address(this);
@@ -198,6 +203,7 @@ function makeInvestment(uint256 _proposalId, uint256[] memory parcelId) external
 
         // Update parcel details
         parcel.parcelOwner = msg.sender;
+        parcel.parcelOwned = parcelId.length;
         parcel.isForSale = false;
     }
 
@@ -219,7 +225,7 @@ function createBidProposal(uint256 _proposalId, uint256 _reservePrice) //reserve
     bidProposals[] storage proposals = idToBidProposalDetails[_proposalId];
 
     for (uint256 i = 0; i < proposals.length; i++) {
-        require(!(proposals[i].proposalId == _proposalId && proposals[i].active), "proposal already exists");
+        require(!(proposals[i].proposalId == _proposalId && proposals[i].isActive), "proposal already exists");
     }
 
     bidId++;
@@ -230,7 +236,7 @@ function createBidProposal(uint256 _proposalId, uint256 _reservePrice) //reserve
             bidId: bidId,
             reservePrice: _reservePrice,
             approved: false,// proposal is approved for sale or not
-            active: true //proposal is active or not
+            isActive: true //proposal is active or not
         })
     );
 }
@@ -257,6 +263,7 @@ function createBidProposal(uint256 _proposalId, uint256 _reservePrice) //reserve
             } else {
                 rejectBidProposal(_proposalId);
             }
+             isBidProposalApproved[_proposalId] = true;
         }
     }
 
@@ -282,9 +289,9 @@ function createBidProposal(uint256 _proposalId, uint256 _reservePrice) //reserve
 function approveBidProposal(uint256 _proposalId) internal {
     bidProposals[] storage proposals = idToBidProposalDetails[_proposalId];
     for (uint256 i = 0; i < proposals.length; i++) {
-        if (proposals[i].active) {
+        if (proposals[i].isActive) {
             proposals[i].approved = true;
-            proposals[i].active = false;
+            proposals[i].isActive = false;
            
         }
     }
@@ -293,23 +300,51 @@ function approveBidProposal(uint256 _proposalId) internal {
 function rejectBidProposal(uint256 _proposalId) internal {
     bidProposals[] storage proposals = idToBidProposalDetails[_proposalId];
     for (uint256 i = 0; i < proposals.length; i++) {
-        if (proposals[i].active) {
+        if (proposals[i].isActive) {
             proposals[i].approved = false;
-            proposals[i].active = true;
+            proposals[i].isActive = true;
             
         }
     }
 }
-/*
-function to share the profit to parcelHolders
-*/
-
 
     function parcelClaim(address _parcelToken, uint256 _proposalId, uint _reservePrice) external payable onlyArtist(_proposalId){
-        
+        require(isBidProposalApproved[_proposalId], "Bid proposal not approved by majority");
+        Parcels[] storage parcels = proposalIdToParcels[_proposalId];
+        require(parcels.length > 0, "No parcels for the proposal");
+
+        bool isValidParcel = false;
+        for (uint256 i = 0; i < parcels.length; i++) {
+            if (_parcelToken == parcels[i].parcelToken &&
+                _proposalId == parcels[i].proposalId &&
+                _reservePrice == idToBidProposalDetails[_proposalId][bidId-1].reservePrice) {
+                isValidParcel = true;
+                break;
+            }
+        }
+        require(isValidParcel, "Invalid parcel details");
+
+  // Calculate total number of parcels for a proposalId
+uint256 totalParcels = 0;
+for (uint256 i = 0; i < parcels.length; i++) {
+    if (parcels[i].proposalId == _proposalId) {
+        totalParcels = totalParcels.add(1);
     }
+}
+console.log("Total Parcels for Proposal ID:", totalParcels);
 
 
+    //   // Distribute the reserve price among parcel holders and burn tokens
+    // for (uint256 i = 0; i < parcels.length; i++) {
+    //     address parcelHolder = parcels[i].parcelOwner;
+    //     uint256 holderTokens = parcels[i].parcelOwned;
+    //     uint256 share = (_reservePrice * holderTokens) / totalParcels;
+
+    //     // Transfer funds to parcel holder
+    //     payable(parcelHolder).transfer(share);
+    // console.log("holderTokens:",holderTokens);
+    // }
+    }
 // function for setting the escrow contract address 
 function setEscrowContract(address payable _escrowContract) external onlyOwner{
     escrowContract = _escrowContract;
@@ -398,6 +433,16 @@ function getBidProposalDetails(uint _proposalId, uint _bidId) internal view retu
         return idToBidProposalDetails[_proposalId];
     }
 
+   function getParcelContractAddress(uint256 _proposalId) public view returns (address) {
+    Parcels[] memory parcels = proposalIdToParcels[_proposalId];
+
+    require(parcels.length > 0, "No parcels for the proposal");
+    address parcelTokenAddress = parcels[0].parcelToken;
+
+    return parcelTokenAddress;
+}
+
+
     function getAllVotersWithStatus(uint256 _proposalId) external view returns (address[] memory, bool[] memory) {
     Voters storage voters = idToVoters[_proposalId];
     
@@ -423,7 +468,7 @@ function getBidProposalDetails(uint _proposalId, uint _bidId) internal view retu
 
 
 //1000000000000000000
-//100000000000000000
+
 
 //pinata: https://gateway.pinata.cloud/ipfs/QmcCLszT5NDEJsmYbg8bnFibt75yfY5P5bcqJZNoRK9cu8
 
@@ -445,9 +490,35 @@ function getBidProposalDetails(uint _proposalId, uint _bidId) internal view retu
 // }
 
 /*
-//in this function knowing all investors agree to sell their parcels.
-1.check for all the requirements
-2.owner will transfer some funds so that it will distribute to the parcelHolders
-3.the parcel tokens will burn
-
+function to share the profit to parcelHolders and burn the parcel tokens
+1.checks
+2.transfer and distribution of funds 
+3.burning of parcel tokens
 */
+// function parcelClaim(address _parcelToken, uint256 _proposalId, uint256 _reservePrice) external payable onlyArtist(_proposalId) {
+//     require(isBidProposalApproved[_proposalId], "Bid proposal not approved by majority");
+//     Parcels[] storage parcels = proposalIdToParcels[_proposalId];
+//     require(parcels.length > 0, "No parcels for the proposal");
+
+//     // Calculate total tokens held by all parcel holders
+//     uint256 totalTokens = 0;
+//     for (uint256 i = 0; i < parcels.length; i++) {
+//         totalTokens = totalTokens.add(tokensPerHolder[parcels[i].parcelOwner]);
+//     }
+
+//     // Distribute the reserve price among parcel holders and burn tokens
+//     for (uint256 i = 0; i < parcels.length; i++) {
+//         address parcelHolder = parcels[i].parcelOwner;
+//         uint256 holderTokens = tokensPerHolder[parcelHolder];
+//         uint256 share = (_reservePrice * holderTokens) / totalTokens;
+
+//         // Transfer funds to parcel holder
+//         payable(parcelHolder).transfer(share);
+
+//         // Burn tokens from the parcelToken contract
+//         ParcelToken(_parcelToken).burnTokens(parcelHolder, holderTokens);
+
+//         // Update parcel details
+//         parcels[i].isForSale = false;
+//     }
+
