@@ -10,6 +10,9 @@ contract ParcelToken is ERC721URIStorage {
     using Counters for Counters.Counter;
     Counters.Counter private _tokenIds;
 
+    address[] parcelOwners;
+    mapping (address => uint) public numberOfParecl;
+
     constructor() ERC721("ParcelToken", "PT") {}
 
     function mintParcel(address to, uint256 noOfParcel) public {
@@ -42,4 +45,5 @@ contract ParcelToken is ERC721URIStorage {
             _burn(tokenIds[i]);
         }
 }
+
 }
