@@ -96,18 +96,28 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
         _;
     }
 
-    mapping(uint256 proposalId=> NftDetails) public idToNftDetails;
-    mapping(uint256 proposalId=> Parcels[]) public proposalIdToParcels;
-    mapping(address investor=> Investor) public addressToInvestorDetails;
-    mapping(uint256 proposalId=> bidProposals) public idToBidProposalDetails;
-    mapping(uint256 proposalId=> Voters) private idToVoters;
-    mapping(uint256 bidId=> BidDetails) public bidIdToBidDetails;
-    mapping(uint256 proposalId=> bool) public isBidProposalApproved;
+    mapping(uint256 => NftDetails) public idToNftDetails;
+    mapping(uint256 => Parcels[]) public proposalIdToParcels;
+    mapping(address => Investor) public addressToInvestorDetails;
+    mapping(uint256 => bidProposals) public idToBidProposalDetails;
+    mapping(uint256 => Voters) private idToVoters;
+    mapping(uint256 => BidDetails) public bidIdToBidDetails;
+    mapping(uint256 => bool) public isBidProposalApproved;
 
     // mapping(address parcelHolder=> uint256 tokens) private tokensPerHolder;
 
     constructor() ERC1155("https://myapi.com/api/token/{id}.json") {}
 
+
+  /* 
+  *@param NftUrl- url of the NFT
+  *@param docNames - docs of the nft
+  *@param docUrls- doc urls
+  *@param ParcellingPrice - this is the price for all parcels
+  *@param minimumInvestment- minimum investment
+  *@param noOfParcel- parcel count to break a masterNFT into pieces
+  *@notice this function will mint the master NFT and the new ERC721 conract for parcels.
+  */
     function mintNFT(
         string memory NftUrl,
         string[] memory docNames,
@@ -152,7 +162,10 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
         }
     }
 
-    // to get the owner of the master nft
+    /*
+   * @param _proposalId- proposal id for the master and parcel NFTs
+   * @notice this function tells the owner of the master Nft
+    */
     function ownerOfMasterNft(uint256 _proposalId)
         external
         view
@@ -161,11 +174,16 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
         return idToNftDetails[_proposalId].artist;
     }
 
-    // to set the price for parcels
-    function setPriceForMultipleParcels(
-        uint256 _proposalId,
-        uint256[] memory prices
-    ) external onlyArtist(_proposalId) {
+    
+    /*
+    @param _proposalId- proposal id for the master and parcel NFTs
+    @param prices- price of the single parcel
+    @notice this function sets the price for single or multiple parcels
+    */
+    function setPriceForParcels(uint256 _proposalId, uint256[] memory prices)
+        external
+        onlyArtist(_proposalId)
+    {
         require(
             prices.length == proposalIdToParcels[_proposalId].length,
             "Invalid prices array length"
@@ -175,6 +193,13 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
             proposalIdToParcels[_proposalId][i].parcelPrice = prices[i];
         }
     }
+
+ 
+    /*
+    @param _proposalId- proposal id for the master and parcel NFTs
+    @param parcelId- parcel Id for the parcels 
+    @notice this function helps the investors to buy the single or multiple parcels
+    */
 
     function makeInvestment(uint256 _proposalId, uint256[] memory parcelId)
         external
@@ -221,7 +246,12 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
         investorDetails.InvestorAddress = payable(msg.sender);
     }
 
-    // function to create  bidProposals for masterNFT and set the reservePrice
+ 
+    /*
+    @param _proposalId- proposal id for the master and parcel NFTs
+    @param _reservePrice- minimum amount for the maserNft
+    @notice this function helps the artist to creating a proposal so the parcelHolders will come to know about the selling of the master NFT
+    */
     function createBidProposal(
         uint256 _proposalId,
         uint256 _reservePrice //reservePrice=> minimum amount the seller will accept
@@ -243,6 +273,11 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
         bidId++;
     }
 
+    /*
+    @param _proposalId- proposal id for the master and parcel NFTs
+    @param _voteStatus- voting for the master NFT by the nftHolders
+    @notice this function helps the the parcel holders to vote on the proposals to approve or to reject it.
+    */
     function voteForBidProposal(uint256 _proposalId, bool _voteStatus)
         external
     {
@@ -271,6 +306,8 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
                 rejectBidProposal(_proposalId);
             }
             isBidProposalApproved[_proposalId] = true;
+        }else{
+            isBidProposalApproved[_proposalId] = false;
         }
     }
 
@@ -316,13 +353,20 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
         }
     }
 
+    /*
+    @param _proposalId- proposal id for the master and parcel NFTs
+    @param _parcelToken- address of parcel token
+    @param _reservePrice- reseve price for master NFT
+    @notice this function burn the parcel tokens and distributes the profit amount amoung the parcelHolders.
+    NOTE: the bid proposal should be passed by majority.
+    */
     function parcelClaim(
         address _parcelToken,
         uint256 _proposalId,
         uint256 _reservePrice
     ) external payable onlyArtist(_proposalId) {
         require(
-            isBidProposalApproved[_proposalId],
+            idToBidProposalDetails[_proposalId].approved ==true,
             "Bid proposal not approved by majority"
         );
         Parcels[] storage parcels = proposalIdToParcels[_proposalId];
@@ -366,7 +410,11 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
         //NOTE:burn the parcel tokens
     }
 
-    // function for setting the escrow contract address
+
+    /*
+    @param _escrowContract- address of the escrow contract
+    @notice this function helps in setting up the Escrow Contract
+    */
     function setEscrowContract(address payable _escrowContract)
         external
         onlyOwner
@@ -374,7 +422,14 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
         escrowContract = _escrowContract;
     }
 
-    /*start the bid for the masterNFT*/
+  
+    /*
+    @param _proposalId- proposal id for the master and parcel NFTs
+    @param _bidId- bid id of the particular NFt 
+    @param _reservePrice- minimum price for the master NFT
+    @param _duration- duration for the bid
+    @notice this function start the bid and stores the details
+    */
 
     function startBid(
         uint256 _proposalId,
@@ -400,14 +455,13 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
         bidIdToBidDetails[_bidId].isOnSale = true;
     }
 
-    //function to bid
     /*
-1. anyone can bid on master above the reserve price.
-2. bidders bid save in escrow contract
-3. previos bid amount will transfer back to the bidder incase other bidder makes the highestBid.
-4. continue bidding till the bids duration
-
-*/
+    @param _bidId- bid id of the particular NFt 
+    @param _bidAmount - bidding amount for the Master Nft by the investors
+    @param _walletAddress- wallet address of the caller so Nft can be transfered to their wallet address
+    @notice this function allows bidders to bid on the particular masterNft.The amount bidded by the bidderrs will be send to the escrow contract,
+    the highest bid kept in the escrow contract and previous bid send back to the respective bidder
+    */
     function bidOnMasterNft(
         uint256 _bidId,
         uint256 _bidAmount,
@@ -424,7 +478,6 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
             "Bid amount must be higher than current highest bid"
         );
 
-
         //Deposit the new bid amount into the escrow
         escrow.deposit{value: msg.value}(_walletAddress, _bidAmount);
 
@@ -436,8 +489,6 @@ contract ArtParcel is ERC1155, Ownable(msg.sender) {
         // Update the highest bid and bidder
         bidDetails.highestBid = _bidAmount;
         bidDetails.highestBidder = payable(_walletAddress);
-
-       
     }
 
     /*
@@ -445,6 +496,13 @@ In case the bid winner wants to claim Artwork, they need to pay the necessary se
 custodian fees and shipping charges. Once these fees are settled, the Artwork will be shipped to the buyer's location,
 and all the corresponding NFTs will be burned.
 */
+
+    /*
+    @param _proposalId- proposal id for the master and parcel NFTs
+    @param _bidId- bid id of the particular NFt 
+    @notice this function helps the new owner of masterNft to claim the art in physical, for this one has to pay some fees and then MasterNft will burn.
+    and physical art will deliver to the owner
+    */
 
     function claimPhysicalAsset(uint256 _proposalId, uint256 _bidId)
         external
@@ -477,10 +535,9 @@ and all the corresponding NFTs will be burned.
     }
 
     /*
-If there are no suitable offers, the proposer can redeem their NFT back to the platform, 
+If there are no suitable offers, the proposer(artis) can redeem their NFT back to the platform, 
 but this process incurs platform fees and custodianship charges, deducted from the stacking amount.
 */
-
     function requestToReleaseAsset(uint256 _proposalId)
         external
         onlyArtist(_proposalId)
